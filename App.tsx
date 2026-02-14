@@ -18,10 +18,7 @@ interface ErrorBoundaryState {
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false };
-  }
+  state: ErrorBoundaryState = { hasError: false };
 
   static getDerivedStateFromError(error: any): ErrorBoundaryState {
     return { hasError: true };
@@ -84,8 +81,11 @@ export default function App() {
         // Migration: Check for old single course format
         const oldCourse = localStorage.getItem('neuroLearnCourse');
         
+        let loadedCourses: Course[] = [];
+
         if (savedCourses) {
-            setCourses(JSON.parse(savedCourses));
+            loadedCourses = JSON.parse(savedCourses);
+            setCourses(loadedCourses);
         } else if (oldCourse) {
             // Migrate old single course to array
             const parsed = JSON.parse(oldCourse);
@@ -94,7 +94,8 @@ export default function App() {
                 id: parsed.id || `course-${Date.now()}`,
                 createdAt: parsed.createdAt || Date.now()
             };
-            setCourses([migrated]);
+            loadedCourses = [migrated];
+            setCourses(loadedCourses);
             localStorage.setItem('neuroLearnCourses', JSON.stringify([migrated]));
             localStorage.removeItem('neuroLearnCourse'); // Clean up
         }
@@ -109,6 +110,10 @@ export default function App() {
              if (savedState === 'PROFILE') setActiveTab('profile');
              else if (savedState === 'CREATIVE') setActiveTab('create');
              else setActiveTab('learn');
+        } else if (loadedCourses.length > 0) {
+            // Default to profile if courses exist but no state
+            setAppState('PROFILE');
+            setActiveTab('profile');
         }
 
     } catch (e) {
@@ -196,10 +201,18 @@ export default function App() {
   };
 
   const handleDeleteCourse = (id: string) => {
-      setCourses(prev => prev.filter(c => c.id !== id));
+      const remaining = courses.filter(c => c.id !== id);
+      setCourses(remaining);
+      
       if (activeCourseId === id) {
           setActiveCourseId(null);
-          setAppState('PROFILE');
+          if (remaining.length === 0) {
+              setAppState('INITIAL');
+          } else {
+              setAppState('PROFILE');
+          }
+      } else if (remaining.length === 0) {
+          setAppState('INITIAL');
       }
   };
 
@@ -208,6 +221,7 @@ export default function App() {
   const activeCourse = courses.find(c => c.id === activeCourseId);
 
   const renderContent = () => {
+    // Priority Tabs
     if (activeTab === 'create') return <CreativeTools />;
     if (activeTab === 'profile') return (
         <ProfileView 
@@ -228,9 +242,62 @@ export default function App() {
         />
     );
 
-    // Learning Tab Logic
+    // If activeTab is 'learn', verify we have a course or we are in initial/gen flow
+    if (activeTab === 'learn' && appState === 'LEARNING' && !activeCourse) {
+         // Fallback if state says learning but no course selected
+         if (courses.length > 0) return (
+             <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
+                 <p className="text-slate-400 mb-4 text-lg">Выберите курс из профиля.</p>
+                 <button 
+                    onClick={() => setActiveTab('profile')} 
+                    className="text-indigo-400 hover:text-indigo-300 underline font-bold"
+                >
+                    Перейти в профиль
+                </button>
+             </div>
+         );
+         // If no courses, reset to initial
+         setTimeout(() => setAppState('INITIAL'), 0);
+         return null; 
+    }
+
+    // Main Switch
     switch (appState) {
+      case 'CLARIFYING':
+        return (
+          <ClarificationFlow 
+            topic={topic} 
+            clarificationState={clarification} 
+            onAnswer={handleClarificationAnswer}
+            isLoading={loading && clarification.answers.length === clarification.questions.length}
+          />
+        );
+
+      case 'GENERATING':
+        return (
+          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-4">
+            <div className="relative mb-8">
+              <div className="w-24 h-24 border-4 border-slate-700 rounded-full"></div>
+              <div className="absolute top-0 left-0 w-24 h-24 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
+            </div>
+            <h2 className="text-3xl font-bold text-white mb-3">Создаем структуру курса</h2>
+            <p className="text-slate-400 max-w-md mx-auto">
+              Разрабатываем модули, планируем уроки и адаптируем материал под ваши ответы.
+            </p>
+          </div>
+        );
+
+      case 'LEARNING':
+        return activeCourse ? (
+          <CourseView 
+            course={activeCourse} 
+            updateCourse={handleUpdateActiveCourse} 
+          />
+        ) : null;
+
       case 'INITIAL':
+      default:
+        // Explicit Initial State Render
         return (
           <div className="flex flex-col items-center justify-center min-h-[80vh] text-center px-4 animate-fade-in">
             <div className="w-24 h-24 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-indigo-500/20">
@@ -264,74 +331,19 @@ export default function App() {
             </form>
           </div>
         );
-
-      case 'CLARIFYING':
-        return (
-          <ClarificationFlow 
-            topic={topic} 
-            clarificationState={clarification} 
-            onAnswer={handleClarificationAnswer}
-            isLoading={loading && clarification.answers.length === clarification.questions.length}
-          />
-        );
-
-      case 'GENERATING':
-        return (
-          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-4">
-            <div className="relative mb-8">
-              <div className="w-24 h-24 border-4 border-slate-700 rounded-full"></div>
-              <div className="absolute top-0 left-0 w-24 h-24 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
-            </div>
-            <h2 className="text-3xl font-bold text-white mb-3">Создаем структуру курса</h2>
-            <p className="text-slate-400 max-w-md mx-auto">
-              Разрабатываем модули, планируем уроки и адаптируем материал под ваши ответы.
-            </p>
-          </div>
-        );
-
-      case 'LEARNING':
-        return activeCourse ? (
-          <CourseView 
-            course={activeCourse} 
-            updateCourse={handleUpdateActiveCourse} 
-          />
-        ) : (
-             <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
-                 <p className="text-slate-400 mb-4 text-lg">Выберите курс из профиля или создайте новый.</p>
-                 <button 
-                    onClick={() => setActiveTab('profile')} 
-                    className="text-indigo-400 hover:text-indigo-300 underline font-bold"
-                >
-                    Перейти в профиль
-                </button>
-             </div>
-        );
-
-      default:
-        // Fallback to Profile if lost state
-        if (courses.length > 0) {
-            setAppState('PROFILE'); // This will trigger re-render on next tick roughly speaking, but safe for render fallback
-            return <div />; 
-        }
-        return (
-             <div className="text-center p-10">
-                 <button onClick={() => setAppState('INITIAL')} className="text-indigo-400 underline">На главную</button>
-             </div>
-        );
     }
   };
 
-  const showTabs = ['LEARNING', 'PROFILE', 'CREATIVE'].includes(appState) || activeTab === 'profile' || activeTab === 'create';
+  const showTabs = courses.length > 0;
 
   return (
     <Layout 
       activeTab={activeTab} 
       onTabChange={(tab) => {
           setActiveTab(tab);
-          // If switching to learn tab but no active course, handle gracefully in renderContent
           if (tab === 'profile') setAppState('PROFILE');
       }} 
-      showTabs={courses.length > 0} // Only show tabs if user has at least one course created
+      showTabs={showTabs} 
     >
       <ErrorBoundary>
         {renderContent()}
